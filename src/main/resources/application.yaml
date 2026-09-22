@@ -13,5 +13,9 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
+  jackson:
+    deserialization:
+      accept-float-as-int: false
+      fail-on-unknown-properties: true
 server:
   port: ${PORT:8080}
