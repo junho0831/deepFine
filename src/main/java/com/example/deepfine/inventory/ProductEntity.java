@@ -16,4 +16,8 @@ public class ProductEntity {
     private long quantity;
 
     protected ProductEntity() {}
+
+    public Product toProduct() {
+        return new Product(id, name, quantity);
+    }
 }
