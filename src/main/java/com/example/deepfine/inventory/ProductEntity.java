@@ -27,6 +27,15 @@ public class ProductEntity {
         quantity += amount;
     }
 
+    public void ship(long amount) {
+        validateAmount(amount);
+        if (quantity < amount) {
+            throw new InventoryException(HttpStatus.CONFLICT, "INSUFFICIENT_STOCK",
+                    "출고 가능한 재고가 부족합니다.");
+        }
+        quantity -= amount;
+    }
+
     public Product toProduct() {
         return new Product(id, name, quantity);
     }

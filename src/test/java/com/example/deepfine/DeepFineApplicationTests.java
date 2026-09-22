@@ -1,7 +1,9 @@
 package com.example.deepfine;
 
 import com.example.deepfine.inventory.InventoryService;
+import com.example.deepfine.inventory.InventoryException;
 import com.example.deepfine.inventory.ReceiveRequest;
+import com.example.deepfine.inventory.ShipRequest;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -47,8 +49,13 @@ class DeepFineApplicationTests {
     @Autowired ObjectMapper mapper;
     private final HttpClient client = HttpClient.newHttpClient();
 
+    @BeforeEach
+    void cleanDatabase() {
+        jdbc.execute("TRUNCATE TABLE product RESTART IDENTITY");
+    }
+
     @Test
-    void receivesNewAndExistingProductThroughHttp() throws Exception {
+    void receiveShipAndReadThroughHttp() throws Exception {
         var received = request("POST", "/api/products/receipts", "{\"name\":\" 상품 A \",\"quantity\":10}");
         assertThat(received.statusCode()).isEqualTo(200);
         var product = mapper.readTree(received.body());
@@ -57,11 +64,14 @@ class DeepFineApplicationTests {
         assertThat(product.get("quantity").asLong()).isEqualTo(10);
         var again = request("POST", "/api/products/receipts", "{\"name\":\"상품 A\",\"quantity\":2}");
         assertThat(mapper.readTree(again.body()).get("id").asLong()).isEqualTo(id);
-    }
-
-    @BeforeEach
-    void cleanDatabase() {
-        jdbc.execute("TRUNCATE TABLE product RESTART IDENTITY");
+        var shipped = request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":12}");
+        assertThat(shipped.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(shipped.body()).get("quantity").asLong()).isZero();
+        assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":1}"),
+                409, "INSUFFICIENT_STOCK");
+        var read = request("GET", "/api/products/" + id, null);
+        assertThat(read.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(read.body()).get("quantity").asLong()).isZero();
     }
 
     @ParameterizedTest
@@ -103,6 +113,24 @@ class DeepFineApplicationTests {
     }
 
     @Test
+    void rejectsInvalidShipmentIdsAndMissingProducts() throws Exception {
+        for (String id : List.of("0", "-1", "abc", "9223372036854775808")) {
+            assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":1}"),
+                    400, "INVALID_REQUEST");
+        }
+        assertError(request("POST", "/api/products/999/shipments", "{\"quantity\":1}"),
+                404, "PRODUCT_NOT_FOUND");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "null", "{\"quantity\":0}", "{\"quantity\":-1}", "{\"quantity\":1.5}"})
+    void rejectsInvalidShipments(String body) throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 10L)).id();
+        assertError(request("POST", "/api/products/" + id + "/shipments", body), 400, "INVALID_REQUEST");
+        assertThat(inventory.get(id).quantity()).isEqualTo(10);
+    }
+
+    @Test
     void rejectsOverflowWithoutChangingStock() throws Exception {
         long id = inventory.receive(new ReceiveRequest("A", Long.MAX_VALUE)).id();
         assertError(request("POST", "/api/products/receipts", "{\"name\":\"A\",\"quantity\":1}"),
@@ -115,6 +143,35 @@ class DeepFineApplicationTests {
         concurrently(80, i -> inventory.receive(new ReceiveRequest("동시 등록", 1L)));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT quantity FROM product", Long.class)).isEqualTo(80);
+    }
+
+    @Test
+    void concurrentShipmentsNeverOversell() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 20L)).id();
+        var success = new java.util.concurrent.atomic.AtomicInteger();
+        var conflicts = new java.util.concurrent.atomic.AtomicInteger();
+        concurrently(80, i -> {
+            try {
+                inventory.ship(id, new ShipRequest(1L));
+                success.incrementAndGet();
+            } catch (InventoryException e) {
+                assertThat(e.code()).isEqualTo("INSUFFICIENT_STOCK");
+                conflicts.incrementAndGet();
+            }
+        });
+        assertThat(success.get()).isEqualTo(20);
+        assertThat(conflicts.get()).isEqualTo(60);
+        assertThat(inventory.get(id).quantity()).isZero();
+    }
+
+    @Test
+    void concurrentReceiptsAndShipmentsPreserveExactQuantity() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 100L)).id();
+        concurrently(100, i -> {
+            if (i % 2 == 0) inventory.receive(new ReceiveRequest("A", 2L));
+            else inventory.ship(id, new ShipRequest(1L));
+        });
+        assertThat(inventory.get(id).quantity()).isEqualTo(150);
     }
 
     @Test

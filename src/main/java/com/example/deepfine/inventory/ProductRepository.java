@@ -10,6 +10,10 @@ import org.springframework.data.repository.query.Param;
 
 public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from ProductEntity p where p.id = :id")
+    Optional<ProductEntity> findByIdForUpdate(@Param("id") long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from ProductEntity p where p.name = :name")
     Optional<ProductEntity> findByNameForUpdate(@Param("name") String name);
 

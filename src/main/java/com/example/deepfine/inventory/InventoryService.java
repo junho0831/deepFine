@@ -27,6 +27,13 @@ public class InventoryService {
         return product.toProduct();
     }
 
+    @Transactional
+    public Product ship(long id, ShipRequest request) {
+        ProductEntity product = products.findByIdForUpdate(id).orElseThrow(this::notFound);
+        product.ship(request.quantity());
+        return product.toProduct();
+    }
+
     private InventoryException notFound() {
         return new InventoryException(HttpStatus.NOT_FOUND, "PRODUCT_NOT_FOUND", "상품을 찾을 수 없습니다.");
     }

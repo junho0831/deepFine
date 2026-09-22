@@ -22,4 +22,9 @@ public class InventoryController {
     public Product receive(@RequestBody @Valid ReceiveRequest request) {
         return inventory.receive(request);
     }
+
+    @PostMapping("/{id}/shipments")
+    public Product ship(@PathVariable @Positive long id, @RequestBody @Valid ShipRequest request) {
+        return inventory.ship(id, request);
+    }
 }
