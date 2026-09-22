@@ -1,3 +1,17 @@
 spring:
   application:
     name: deepFine
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/inventory}
+    username: ${DB_USERNAME:inventory}
+    password: ${DB_PASSWORD:inventory}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+      connection-init-sql: "SET statement_timeout = '5s'"
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+server:
+  port: ${PORT:8080}
