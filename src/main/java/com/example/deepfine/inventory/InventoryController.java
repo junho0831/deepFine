@@ -1,5 +1,6 @@
 package com.example.deepfine.inventory;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,5 +16,10 @@ public class InventoryController {
     @GetMapping("/{id}")
     public Product get(@PathVariable @Positive long id) {
         return inventory.get(id);
+    }
+
+    @PostMapping("/receipts")
+    public Product receive(@RequestBody @Valid ReceiveRequest request) {
+        return inventory.receive(request);
     }
 }

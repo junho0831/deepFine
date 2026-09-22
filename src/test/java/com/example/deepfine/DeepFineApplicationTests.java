@@ -1,14 +1,20 @@
 package com.example.deepfine;
 
 import com.example.deepfine.inventory.InventoryService;
+import com.example.deepfine.inventory.ReceiveRequest;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.*;
+import java.util.function.IntConsumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -41,9 +47,34 @@ class DeepFineApplicationTests {
     @Autowired ObjectMapper mapper;
     private final HttpClient client = HttpClient.newHttpClient();
 
+    @Test
+    void receivesNewAndExistingProductThroughHttp() throws Exception {
+        var received = request("POST", "/api/products/receipts", "{\"name\":\" 상품 A \",\"quantity\":10}");
+        assertThat(received.statusCode()).isEqualTo(200);
+        var product = mapper.readTree(received.body());
+        long id = product.get("id").asLong();
+        assertThat(product.get("name").asText()).isEqualTo("상품 A");
+        assertThat(product.get("quantity").asLong()).isEqualTo(10);
+        var again = request("POST", "/api/products/receipts", "{\"name\":\"상품 A\",\"quantity\":2}");
+        assertThat(mapper.readTree(again.body()).get("id").asLong()).isEqualTo(id);
+    }
+
     @BeforeEach
     void cleanDatabase() {
         jdbc.execute("TRUNCATE TABLE product RESTART IDENTITY");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{}", "null", "{", "{\"name\":\" \",\"quantity\":1}",
+            "{\"name\":\"A\",\"quantity\":0}", "{\"name\":\"A\",\"quantity\":-1}",
+            "{\"name\":\"A\",\"quantity\":null}", "{\"name\":\"A\",\"quantity\":1.5}",
+            "{\"name\":\"A\",\"quantity\":9223372036854775808}",
+            "{\"name\":\"A\",\"quantity\":1,\"typo\":1}"
+    })
+    void rejectsInvalidReceipts(String body) throws Exception {
+        assertError(request("POST", "/api/products/receipts", body), 400, "INVALID_REQUEST");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isZero();
     }
 
     @Test
@@ -66,12 +97,59 @@ class DeepFineApplicationTests {
     }
 
     @Test
+    void rejectsLongReceiptName() throws Exception {
+        assertError(request("POST", "/api/products/receipts",
+                "{\"name\":\"" + "A".repeat(101) + "\",\"quantity\":1}"), 400, "INVALID_REQUEST");
+    }
+
+    @Test
+    void rejectsOverflowWithoutChangingStock() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", Long.MAX_VALUE)).id();
+        assertError(request("POST", "/api/products/receipts", "{\"name\":\"A\",\"quantity\":1}"),
+                409, "STOCK_LIMIT_EXCEEDED");
+        assertThat(inventory.get(id).quantity()).isEqualTo(Long.MAX_VALUE);
+    }
+
+    @Test
+    void concurrentNewProductReceiptsCreateOneRowAndLoseNoUpdates() throws Exception {
+        concurrently(80, i -> inventory.receive(new ReceiveRequest("동시 등록", 1L)));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM product", Long.class)).isEqualTo(80);
+    }
+
+    @Test
     void ddlRejectsNegativeStockAndDuplicateNames() {
         jdbc.update("INSERT INTO product(name, quantity) VALUES ('A', 1)");
         assertThatThrownBy(() -> jdbc.update("UPDATE product SET quantity = -1"))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("INSERT INTO product(name, quantity) VALUES ('A', 1)"))
                 .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    }
+
+    private void concurrently(int count, IntConsumer action) throws Exception {
+        int workers = 16;
+        ExecutorService executor = Executors.newFixedThreadPool(workers);
+        CountDownLatch ready = new CountDownLatch(workers);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> results = new ArrayList<>();
+        try {
+            for (int i = 0; i < count; i++) {
+                final int index = i;
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("Start timeout");
+                    action.accept(index);
+                    return null;
+                }));
+            }
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            for (Future<?> result : results) result.get(30, TimeUnit.SECONDS);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        }
     }
 
     private HttpResponse<String> request(String method, String path, String body) throws Exception {

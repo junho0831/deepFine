@@ -17,6 +17,16 @@ public class InventoryService {
         return products.findById(id).orElseThrow(this::notFound).toProduct();
     }
 
+    @Transactional
+    public Product receive(ReceiveRequest request) {
+        ProductEntity product = products.findByNameForUpdate(request.name()).orElseGet(() -> {
+            products.insertIfAbsent(request.name());
+            return products.findByNameForUpdate(request.name()).orElseThrow(this::notFound);
+        });
+        product.receive(request.quantity());
+        return product.toProduct();
+    }
+
     private InventoryException notFound() {
         return new InventoryException(HttpStatus.NOT_FOUND, "PRODUCT_NOT_FOUND", "상품을 찾을 수 없습니다.");
     }
