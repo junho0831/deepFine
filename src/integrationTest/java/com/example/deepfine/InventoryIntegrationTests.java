@@ -298,6 +298,16 @@ class InventoryIntegrationTests {
         }
     }
 
+    @Test
+    @DisplayName("경로 ID 검증 실패도 필드와 원인을 제공한다")
+    void invalidPathIdIncludesFieldMessage() throws Exception {
+        var response = request("GET", "/api/products/0", null);
+        assertError(response, 400, "INVALID_REQUEST");
+        var errors = mapper.readTree(response.body()).get("errors");
+        assertThat(errors.get(0).get("field").asText()).isEqualTo("id");
+        assertThat(errors.get(0).get("message").asText()).isEqualTo("상품 ID는 양수여야 합니다.");
+    }
+
     private void concurrently(int count, IntConsumer action) throws Exception {
         int workers = 16;
         ExecutorService executor = Executors.newFixedThreadPool(workers);

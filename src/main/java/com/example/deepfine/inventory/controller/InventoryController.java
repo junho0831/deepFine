@@ -17,7 +17,7 @@ public class InventoryController {
     private final InventoryService inventory;
 
     @GetMapping("/{id}")
-    public ProductResponse get(@PathVariable @Positive long id) {
+    public ProductResponse get(@PathVariable @Positive(message = "상품 ID는 양수여야 합니다.") long id) {
         return inventory.get(id);
     }
 
@@ -27,7 +27,7 @@ public class InventoryController {
     }
 
     @PostMapping("/{id}/shipments")
-    public ProductResponse ship(@PathVariable @Positive long id, @RequestBody @Valid ShipRequest request) {
+    public ProductResponse ship(@PathVariable @Positive(message = "상품 ID는 양수여야 합니다.") long id, @RequestBody @Valid ShipRequest request) {
         return inventory.ship(id, request);
     }
 }

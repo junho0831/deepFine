@@ -1,5 +1,8 @@
 package com.example.deepfine.inventory.exception;
 
+import java.util.List;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -51,9 +54,43 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "서버 내부 오류가 발생했습니다.");
     }
 
+    public record FieldViolation(String field, String message) {}
+
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException exception,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        List<FieldViolation> errors = exception.getBindingResult().getFieldErrors().stream()
+                .map(error -> new FieldViolation(error.getField(), error.getDefaultMessage()))
+                .distinct().toList();
+        return handleExceptionInternal(exception, invalidFields(errors), headers, status, request);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleHandlerMethodValidationException(HandlerMethodValidationException exception,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        if (exception.isForReturnValue()) {
+            return handleExceptionInternal(exception, null, headers, status, request);
+        }
+        List<FieldViolation> errors = exception.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream().map(error -> new FieldViolation(
+                        result.getMethodParameter().getParameterName(), error.getDefaultMessage())))
+                .distinct().toList();
+        return handleExceptionInternal(exception, invalidFields(errors), headers, status, request);
+    }
+
+    private ProblemDetail invalidFields(List<FieldViolation> errors) {
+        ProblemDetail detail = problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "입력값을 확인해 주세요.");
+        detail.setProperty("errors", errors);
+        return detail;
+    }
+
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(Exception exception, Object body,
             HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        if (body instanceof ProblemDetail problem && problem.getProperties() != null
+                && problem.getProperties().containsKey("code")) {
+            return super.handleExceptionInternal(exception, body, headers, status, request);
+        }
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(status,
                 status.value() == 400 ? "요청 형식, 상품명, 수량 또는 상품 ID를 확인해 주세요."
                         : "요청을 처리할 수 없습니다.");

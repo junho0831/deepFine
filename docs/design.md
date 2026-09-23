@@ -147,7 +147,11 @@ DB statement timeout은 5초, 연결 획득 제한도 5초입니다.
 | 503 | `DATABASE_UNAVAILABLE` | DB 연결 장애, 잠금 획득 실패 등 일시적 DB 오류 |
 | 500 | `INTERNAL_SERVER_ERROR` | SQL 오류·예상하지 못한 제약 위반 등 서버 내부 오류 |
 
-오류는 `application/problem+json`으로 반환합니다. 예:
+오류는 `application/problem+json`으로 반환합니다.
+Bean Validation 입력 오류에는 `errors` 배열로 `field`와 `message`를 제공합니다.
+예를 들어 수량 0은 `{"field":"quantity","message":"수량은 양수여야 합니다."}`로 안내합니다.
+잘못된 JSON이나 타입 변환 실패는 기존 공통 400 응답을 사용하며 내부 파싱 정보는 노출하지 않습니다.
+업무 오류 응답 예:
 
 ```json
 {

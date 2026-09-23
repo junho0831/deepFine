@@ -15,6 +15,7 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class ApiExceptionHandlerTests {
@@ -81,6 +82,30 @@ class ApiExceptionHandlerTests {
         mvc.perform(get("/api/products/1"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("DATABASE_UNAVAILABLE"));
+    }
+
+    @Test
+    @DisplayName("입력 검증 실패 응답은 필드별 원인을 제공한다")
+    void invalidFieldsReturnFieldMessages() throws Exception {
+        mvc.perform(post("/api/products/receipts").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\" \" ,\"quantity\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.errors[?(@.field == 'name')].message").value(
+                        org.hamcrest.Matchers.hasItem("상품명은 필수입니다.")))
+                .andExpect(jsonPath("$.errors[?(@.field == 'quantity')].message").value(
+                        org.hamcrest.Matchers.hasItem("수량은 양수여야 합니다.")));
+        org.mockito.Mockito.verifyNoInteractions(inventory);
+    }
+
+    @Test
+    @DisplayName("깨진 JSON은 내부 파싱 정보를 노출하지 않고 400으로 응답한다")
+    void malformedJsonReturnsGeneric400() throws Exception {
+        mvc.perform(post("/api/products/receipts").contentType(MediaType.APPLICATION_JSON).content("{"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(content().string(not(containsString("Exception"))));
+        org.mockito.Mockito.verifyNoInteractions(inventory);
     }
 
 }
