@@ -7,16 +7,14 @@ import com.example.deepfine.inventory.service.InventoryService;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/products")
 public class InventoryController {
     private final InventoryService inventory;
-
-    public InventoryController(InventoryService inventory) {
-        this.inventory = inventory;
-    }
 
     @GetMapping("/{id}")
     public ProductResponse get(@PathVariable @Positive long id) {

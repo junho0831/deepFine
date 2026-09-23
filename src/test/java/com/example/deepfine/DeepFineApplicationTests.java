@@ -52,7 +52,7 @@ class DeepFineApplicationTests {
 
     @BeforeEach
     void cleanDatabase() {
-        jdbc.execute("TRUNCATE TABLE product RESTART IDENTITY");
+        jdbc.execute("TRUNCATE TABLE stock_movement, inventory, product RESTART IDENTITY");
     }
 
     @Test
@@ -90,7 +90,7 @@ class DeepFineApplicationTests {
 
     @Test
     void readsCurrentStockThroughHttp() throws Exception {
-        long id = jdbc.queryForObject("INSERT INTO product(name, quantity) VALUES ('A', 10) RETURNING id", Long.class);
+        long id = inventory.receive(new ReceiveRequest("A", 10L)).id();
         var response = request("GET", "/api/products/" + id, null);
         assertThat(response.statusCode()).isEqualTo(200);
         var product = mapper.readTree(response.body());
@@ -143,7 +143,7 @@ class DeepFineApplicationTests {
     void concurrentNewProductReceiptsCreateOneRowAndLoseNoUpdates() throws Exception {
         concurrently(80, i -> inventory.receive(new ReceiveRequest("동시 등록", 1L)));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
-        assertThat(jdbc.queryForObject("SELECT quantity FROM product", Long.class)).isEqualTo(80);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM inventory", Long.class)).isEqualTo(80);
     }
 
     @Test
@@ -177,10 +177,10 @@ class DeepFineApplicationTests {
 
     @Test
     void ddlRejectsNegativeStockAndDuplicateNames() {
-        jdbc.update("INSERT INTO product(name, quantity) VALUES ('A', 1)");
-        assertThatThrownBy(() -> jdbc.update("UPDATE product SET quantity = -1"))
+        inventory.receive(new ReceiveRequest("A", 1L));
+        assertThatThrownBy(() -> jdbc.update("UPDATE inventory SET quantity = -1"))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> jdbc.update("INSERT INTO product(name, quantity) VALUES ('A', 1)"))
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO product(name, sku) VALUES ('A', 'OTHER-SKU')"))
                 .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
     }
 

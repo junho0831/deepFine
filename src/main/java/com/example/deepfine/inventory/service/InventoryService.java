@@ -3,46 +3,58 @@ package com.example.deepfine.inventory.service;
 import com.example.deepfine.inventory.dto.ProductResponse;
 import com.example.deepfine.inventory.dto.ReceiveRequest;
 import com.example.deepfine.inventory.dto.ShipRequest;
+import com.example.deepfine.inventory.entity.InventoryEntity;
 import com.example.deepfine.inventory.entity.ProductEntity;
+import com.example.deepfine.inventory.entity.StockMovementEntity;
 import com.example.deepfine.inventory.exception.InventoryException;
 import com.example.deepfine.inventory.exception.InventoryErrorCode;
-import com.example.deepfine.inventory.repository.ProductRepository;
-
+import com.example.deepfine.inventory.repository.*;
+import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class InventoryService {
     private final ProductRepository products;
-
-    public InventoryService(ProductRepository products) {
-        this.products = products;
-    }
+    private final InventoryRepository inventories;
+    private final WarehouseRepository warehouses;
+    private final StockMovementRepository movements;
 
     @Transactional(readOnly = true)
     public ProductResponse get(long id) {
-        return ProductResponse.from(products.findById(id).orElseThrow(this::notFound));
+        return ProductResponse.from(inventories.findStock(id, defaultWarehouseId()).orElseThrow(this::notFound));
     }
 
     @Transactional
     public ProductResponse receive(ReceiveRequest request) {
-        ProductEntity product = findOrCreateForUpdate(request.name());
-        product.receive(request.quantity());
-        return ProductResponse.from(product);
+        ProductEntity product = products.findByName(request.name()).orElseGet(() -> {
+            products.insertIfAbsent(request.name(), "AUTO-" + UUID.randomUUID());
+            return products.findByName(request.name()).orElseThrow(this::notFound);
+        });
+        long warehouseId = defaultWarehouseId();
+        InventoryEntity stock = inventories.findStockForUpdate(product.getId(), warehouseId).orElseGet(() -> {
+            inventories.insertIfAbsent(product.getId(), warehouseId);
+            return inventories.findStockForUpdate(product.getId(), warehouseId).orElseThrow(this::notFound);
+        });
+        stock.receive(request.quantity());
+        movements.save(StockMovementEntity.receipt(stock.getId(), request.quantity()));
+        return ProductResponse.from(stock);
     }
 
     @Transactional
     public ProductResponse ship(long id, ShipRequest request) {
-        ProductEntity product = products.findByIdForUpdate(id).orElseThrow(this::notFound);
-        product.ship(request.quantity());
-        return ProductResponse.from(product);
+        InventoryEntity stock = inventories.findStockForUpdate(id, defaultWarehouseId()).orElseThrow(this::notFound);
+        stock.ship(request.quantity());
+        movements.save(StockMovementEntity.shipment(stock.getId(), request.quantity()));
+        return ProductResponse.from(stock);
     }
 
-    private ProductEntity findOrCreateForUpdate(String name) {
-        return products.findByNameForUpdate(name).orElseGet(() -> {
-            products.insertIfAbsent(name);
-            return products.findByNameForUpdate(name).orElseThrow(this::notFound);
-        });
+    private long defaultWarehouseId() {
+        return warehouses.findByCode("DEFAULT")
+                .orElseThrow(() -> new IllegalStateException("기본 창고가 없습니다."))
+                .getId();
     }
 
     private InventoryException notFound() {

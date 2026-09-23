@@ -7,17 +7,16 @@ import lombok.Getter;
 
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name = "product")
-public class ProductEntity {
+@Table(name = "warehouse")
+public class WarehouseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Getter
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
-    @Getter
-    private String name;
+    @Column(nullable = false, unique = true, length = 50)
+    private String code;
 
-    @Column(nullable = false, unique = true, length = 100)
-    private String sku;
+    @Column(nullable = false, length = 100)
+    private String name;
 }
