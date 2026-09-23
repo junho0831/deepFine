@@ -1,17 +1,14 @@
 package com.example.deepfine.inventory.exception;
 
-import org.springframework.http.HttpStatus;
-
 public class InventoryException extends RuntimeException {
-    private final HttpStatus status;
-    private final String code;
+    private final InventoryErrorCode errorCode;
 
-    public InventoryException(HttpStatus status, String code, String message) {
-        super(message);
-        this.status = status;
-        this.code = code;
+    public InventoryException(InventoryErrorCode errorCode) {
+        super(errorCode.message());
+        this.errorCode = errorCode;
     }
 
-    public HttpStatus status() { return status; }
-    public String code() { return code; }
+    public InventoryErrorCode errorCode() {
+        return errorCode;
+    }
 }

@@ -1,6 +1,6 @@
 package com.example.deepfine.inventory.controller;
 
-import com.example.deepfine.inventory.dto.Product;
+import com.example.deepfine.inventory.dto.ProductResponse;
 import com.example.deepfine.inventory.dto.ReceiveRequest;
 import com.example.deepfine.inventory.dto.ShipRequest;
 import com.example.deepfine.inventory.service.InventoryService;
@@ -19,17 +19,17 @@ public class InventoryController {
     }
 
     @GetMapping("/{id}")
-    public Product get(@PathVariable @Positive long id) {
+    public ProductResponse get(@PathVariable @Positive long id) {
         return inventory.get(id);
     }
 
     @PostMapping("/receipts")
-    public Product receive(@RequestBody @Valid ReceiveRequest request) {
+    public ProductResponse receive(@RequestBody @Valid ReceiveRequest request) {
         return inventory.receive(request);
     }
 
     @PostMapping("/{id}/shipments")
-    public Product ship(@PathVariable @Positive long id, @RequestBody @Valid ShipRequest request) {
+    public ProductResponse ship(@PathVariable @Positive long id, @RequestBody @Valid ShipRequest request) {
         return inventory.ship(id, request);
     }
 }

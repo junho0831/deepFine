@@ -19,7 +19,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(InventoryException.class)
     public ProblemDetail handleInventory(InventoryException exception) {
-        return problem(exception.status(), exception.code(), exception.getMessage());
+        InventoryErrorCode errorCode = exception.errorCode();
+        HttpStatus status = switch (errorCode) {
+            case PRODUCT_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case INSUFFICIENT_STOCK, STOCK_LIMIT_EXCEEDED -> HttpStatus.CONFLICT;
+            case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
+        };
+        return problem(status, errorCode.name(), exception.getMessage());
     }
 
     @ExceptionHandler(DataAccessException.class)

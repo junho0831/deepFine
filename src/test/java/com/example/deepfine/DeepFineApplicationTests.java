@@ -2,6 +2,7 @@ package com.example.deepfine;
 
 import com.example.deepfine.inventory.service.InventoryService;
 import com.example.deepfine.inventory.exception.InventoryException;
+import com.example.deepfine.inventory.exception.InventoryErrorCode;
 import com.example.deepfine.inventory.dto.ReceiveRequest;
 import com.example.deepfine.inventory.dto.ShipRequest;
 import java.net.URI;
@@ -155,7 +156,7 @@ class DeepFineApplicationTests {
                 inventory.ship(id, new ShipRequest(1L));
                 success.incrementAndGet();
             } catch (InventoryException e) {
-                assertThat(e.code()).isEqualTo("INSUFFICIENT_STOCK");
+                assertThat(e.errorCode()).isEqualTo(InventoryErrorCode.INSUFFICIENT_STOCK);
                 conflicts.incrementAndGet();
             }
         });
