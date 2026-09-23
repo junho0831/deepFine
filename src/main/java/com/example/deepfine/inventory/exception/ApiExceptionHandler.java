@@ -27,8 +27,8 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         InventoryErrorCode errorCode = exception.errorCode();
         HttpStatus status = switch (errorCode) {
             case PRODUCT_NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case INSUFFICIENT_STOCK, STOCK_LIMIT_EXCEEDED -> HttpStatus.CONFLICT;
-            case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
+            case INSUFFICIENT_STOCK, STOCK_LIMIT_EXCEEDED, IDEMPOTENCY_CONFLICT -> HttpStatus.CONFLICT;
+            case INVALID_REQUEST, INVALID_IDEMPOTENCY_KEY -> HttpStatus.BAD_REQUEST;
         };
         return problem(status, errorCode.name(), exception.getMessage());
     }

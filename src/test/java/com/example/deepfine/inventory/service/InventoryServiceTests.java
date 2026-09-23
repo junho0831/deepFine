@@ -33,6 +33,7 @@ class InventoryServiceTests {
     @Mock InventoryRepository inventories;
     @Mock WarehouseRepository warehouses;
     @Mock StockMovementRepository movements;
+    @Mock IdempotencyService idempotency;
 
     private InventoryService service;
     private ProductEntity product;
@@ -40,7 +41,7 @@ class InventoryServiceTests {
 
     @BeforeEach
     void setUp() {
-        service = new InventoryService(products, inventories, warehouses, movements);
+        service = new InventoryService(products, inventories, warehouses, movements, idempotency);
         product = BeanUtils.instantiateClass(ProductEntity.class);
         ReflectionTestUtils.setField(product, "id", 11L);
         ReflectionTestUtils.setField(product, "name", "상품 A");

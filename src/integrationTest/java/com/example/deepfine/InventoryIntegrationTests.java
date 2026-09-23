@@ -53,7 +53,7 @@ class InventoryIntegrationTests {
 
     @BeforeEach
     void cleanDatabase() {
-        jdbc.execute("TRUNCATE TABLE stock_movement, inventory, product RESTART IDENTITY");
+        jdbc.execute("TRUNCATE TABLE idempotency_request, stock_movement, inventory, product RESTART IDENTITY");
     }
 
     @Test
@@ -287,10 +287,11 @@ class InventoryIntegrationTests {
         long id = inventory.receive(new ReceiveRequest("상품 A", 10L)).id();
         jdbc.execute("ALTER TABLE inventory ADD CONSTRAINT test_reject_seven_stock CHECK (quantity <> 7)");
         try {
-            assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":3}"),
+            assertError(keyedRequest("/api/products/" + id + "/shipments", "{\"quantity\":3}", "failed-update"),
                     500, "INTERNAL_SERVER_ERROR");
 
             assertThat(inventory.get(id).quantity()).isEqualTo(10);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isZero();
             assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT sum(quantity_delta) FROM stock_movement", Long.class)).isEqualTo(10);
         } finally {
@@ -349,6 +350,166 @@ class InventoryIntegrationTests {
     @ValueSource(strings = {"page=-1", "size=0", "size=101", "page=abc", "size=2147483648"})
     void historyRejectsInvalidPagination(String query) throws Exception {
         assertError(request("GET", "/api/products/1/movements?" + query, null), 400, "INVALID_REQUEST");
+    }
+
+    @Test
+    @DisplayName("같은 키의 HTTP 입고 재시도는 최신 재고 대신 최초 응답을 재현한다")
+    void receiptReplayReturnsOriginalResponse() throws Exception {
+        String body = "{\"name\":\"A\",\"quantity\":10}";
+        var first = keyedRequest("/api/products/receipts", body, "receipt-1");
+        assertThat(first.statusCode()).isEqualTo(200);
+        long id = mapper.readTree(first.body()).get("id").asLong();
+        inventory.ship(id, new ShipRequest(3L));
+        var replay = keyedRequest("/api/products/receipts", body, "receipt-1");
+        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(replay.body())).isEqualTo(mapper.readTree(first.body()));
+        assertThat(inventory.get(id).quantity()).isEqualTo(7);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("출고 재시도는 재고를 다시 차감하지 않는다")
+    void shipmentReplayDoesNotDeductTwice() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 10L)).id();
+        var first = keyedRequest("/api/products/" + id + "/shipments", "{\"quantity\":3}", "ship-1");
+        var replay = keyedRequest("/api/products/" + id + "/shipments", "{\"quantity\":3}", "ship-1");
+        assertThat(first.statusCode()).isEqualTo(200);
+        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(replay.body())).isEqualTo(mapper.readTree(first.body()));
+        assertThat(inventory.get(id).quantity()).isEqualTo(7);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement WHERE type = 'SHIPMENT'", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("같은 키의 다른 수량·상품·작업 유형은 409로 거부한다")
+    void keyCannotBeReusedForDifferentCommands() throws Exception {
+        var first = keyedRequest("/api/products/receipts", "{\"name\":\"A\",\"quantity\":10}", "shared-key");
+        long id = mapper.readTree(first.body()).get("id").asLong();
+        assertError(keyedRequest("/api/products/receipts", "{\"name\":\"A\",\"quantity\":11}", "shared-key"),
+                409, "IDEMPOTENCY_CONFLICT");
+        assertError(keyedRequest("/api/products/receipts", "{\"name\":\"B\",\"quantity\":10}", "shared-key"),
+                409, "IDEMPOTENCY_CONFLICT");
+        assertError(keyedRequest("/api/products/" + id + "/shipments", "{\"quantity\":10}", "shared-key"),
+                409, "IDEMPOTENCY_CONFLICT");
+        assertThat(inventory.get(id).quantity()).isEqualTo(10);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("동시에 같은 키로 입고하면 상품·재고·이력이 한 번만 반영된다")
+    void concurrentSameKeyReceiptsExecuteOnce() throws Exception {
+        var responses = new java.util.concurrent.ConcurrentLinkedQueue<com.example.deepfine.inventory.dto.ProductResponse>();
+        concurrently(40, index -> responses.add(inventory.receive(new ReceiveRequest("A", 5L), "same-receipt")));
+        assertThat(responses).hasSize(40).allMatch(response -> response.equals(responses.peek()));
+        assertThat(jdbc.queryForObject("SELECT quantity FROM inventory", Long.class)).isEqualTo(5);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("같은 키로 동시 출고해도 한 번만 차감한다")
+    void concurrentSameKeyShipmentsExecuteOnce() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 20L)).id();
+        concurrently(40, index -> assertThat(inventory.ship(id, new ShipRequest(3L), "same-ship").quantity()).isEqualTo(17));
+        assertThat(inventory.get(id).quantity()).isEqualTo(17);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement WHERE type = 'SHIPMENT'", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("서로 다른 키의 동시 입고는 각각 반영된다")
+    void concurrentDifferentKeysAllApply() throws Exception {
+        concurrently(40, index -> inventory.receive(new ReceiveRequest("A", 1L), "receipt-" + index));
+        assertThat(jdbc.queryForObject("SELECT quantity FROM inventory", Long.class)).isEqualTo(40);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(40);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isEqualTo(40);
+    }
+
+    @Test
+    @DisplayName("실패한 출고는 키도 롤백하여 입고 후 같은 키로 다시 시도할 수 있다")
+    void failedShipmentDoesNotConsumeKey() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 1L)).id();
+        String path = "/api/products/" + id + "/shipments";
+        assertError(keyedRequest(path, "{\"quantity\":3}", "retry-ship"), 409, "INSUFFICIENT_STOCK");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isZero();
+        inventory.receive(new ReceiveRequest("A", 5L));
+        assertThat(keyedRequest(path, "{\"quantity\":3}", "retry-ship").statusCode()).isEqualTo(200);
+        assertThat(inventory.get(id).quantity()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("DB 저장 실패 시 키와 신규 상품도 롤백되고 같은 키로 복구 후 재시도할 수 있다")
+    void databaseFailureDoesNotConsumeKey() throws Exception {
+        String body = "{\"name\":\"A\",\"quantity\":7}";
+        jdbc.execute("ALTER TABLE stock_movement ADD CONSTRAINT test_reject_keyed CHECK (quantity_delta <> 7)");
+        try {
+            assertError(keyedRequest("/api/products/receipts", body, "retry-receipt"), 500, "INTERNAL_SERVER_ERROR");
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isZero();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isZero();
+        } finally {
+            jdbc.execute("ALTER TABLE stock_movement DROP CONSTRAINT test_reject_keyed");
+        }
+        assertThat(keyedRequest("/api/products/receipts", body, "retry-receipt").statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM inventory", Long.class)).isEqualTo(7);
+    }
+
+    @Test
+    @DisplayName("잘못된 키와 입력은 재고나 요청 기록을 생성하지 않는다")
+    void invalidKeyAndBodyDoNotWrite() throws Exception {
+        assertError(keyedRequest("/api/products/receipts", "{\"name\":\"A\",\"quantity\":1}", "a".repeat(129)),
+                400, "INVALID_IDEMPOTENCY_KEY");
+        assertError(keyedRequest("/api/products/receipts", "{\"name\":\"A\",\"quantity\":0}", "valid-key"),
+                400, "INVALID_REQUEST");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM idempotency_request", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isZero();
+    }
+
+    @Test
+    @DisplayName("동시에 같은 키로 다른 요청이 들어오면 하나만 처리하고 나머지는 충돌로 반환한다")
+    void concurrentDifferentPayloadsConflict() throws Exception {
+        var successes = new java.util.concurrent.atomic.AtomicInteger();
+        var conflicts = new java.util.concurrent.atomic.AtomicInteger();
+        var winningQuantity = new java.util.concurrent.atomic.AtomicLong();
+        concurrently(16, index -> {
+            try {
+                var result = inventory.receive(new ReceiveRequest("A", (long) index + 1), "contended-key");
+                winningQuantity.set(result.quantity());
+                successes.incrementAndGet();
+            } catch (InventoryException exception) {
+                assertThat(exception.errorCode()).isEqualTo(InventoryErrorCode.IDEMPOTENCY_CONFLICT);
+                conflicts.incrementAndGet();
+            }
+        });
+        assertThat(successes.get()).isEqualTo(1);
+        assertThat(conflicts.get()).isEqualTo(15);
+        assertThat(jdbc.queryForObject("SELECT quantity FROM inventory", Long.class)).isEqualTo(winningQuantity.get());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("빈 DB에 V1만 적용하여 전체 테이블과 기본 창고를 생성한다")
+    void v1CreatesInitialSchema() {
+        assertThat(jdbc.queryForList(
+                "SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank",
+                String.class)).containsExactly("1");
+        assertThat(jdbc.queryForList(
+                "SELECT table_name FROM information_schema.tables "
+                        + "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' "
+                        + "AND table_name <> 'flyway_schema_history'",
+                String.class)).containsExactlyInAnyOrder(
+                        "product", "warehouse", "inventory", "stock_movement", "idempotency_request");
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM warehouse WHERE code = 'DEFAULT'", Long.class)).isEqualTo(1);
+    }
+
+    private HttpResponse<String> keyedRequest(String path, String body, String key) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .header("Idempotency-Key", key)
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private void concurrently(int count, IntConsumer action) throws Exception {

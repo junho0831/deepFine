@@ -33,12 +33,15 @@ public class InventoryController {
     }
 
     @PostMapping("/receipts")
-    public ProductResponse receive(@RequestBody @Valid ReceiveRequest request) {
-        return inventory.receive(request);
+    public ProductResponse receive(@RequestBody @Valid ReceiveRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String key) {
+        return inventory.receive(request, key);
     }
 
     @PostMapping("/{id}/shipments")
-    public ProductResponse ship(@PathVariable @Positive(message = "상품 ID는 양수여야 합니다.") long id, @RequestBody @Valid ShipRequest request) {
-        return inventory.ship(id, request);
+    public ProductResponse ship(@PathVariable @Positive(message = "상품 ID는 양수여야 합니다.") long id,
+            @RequestBody @Valid ShipRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String key) {
+        return inventory.ship(id, request, key);
     }
 }

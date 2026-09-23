@@ -23,6 +23,7 @@ public class InventoryService {
     private final InventoryRepository inventories;
     private final WarehouseRepository warehouses;
     private final StockMovementRepository movements;
+    private final IdempotencyService idempotency;
 
     @Transactional(readOnly = true)
     public ProductResponse get(long id) {
@@ -33,6 +34,18 @@ public class InventoryService {
     public StockMovementPage history(long id, int page, int size) {
         InventoryEntity stock = inventories.findStock(id, defaultWarehouseId()).orElseThrow(this::notFound);
         return StockMovementPage.from(movements.findHistory(stock.getId(), PageRequest.of(page, size)));
+    }
+
+    @Transactional
+    public ProductResponse receive(ReceiveRequest request, String key) {
+        String content = "RECEIPT:DEFAULT:" + request.name().length() + ":" + request.name() + ":" + request.quantity();
+        return idempotency.execute(key, content, () -> receive(request));
+    }
+
+    @Transactional
+    public ProductResponse ship(long id, ShipRequest request, String key) {
+        String content = "SHIPMENT:DEFAULT:" + id + ":" + request.quantity();
+        return idempotency.execute(key, content, () -> ship(id, request));
     }
 
     @Transactional
