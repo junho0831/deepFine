@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.function.IntConsumer;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -33,7 +34,7 @@ import static org.assertj.core.api.Assertions.*;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class DeepFineApplicationTests {
+class InventoryIntegrationTests {
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
 
@@ -137,6 +138,7 @@ class DeepFineApplicationTests {
         assertError(request("POST", "/api/products/receipts", "{\"name\":\"A\",\"quantity\":1}"),
                 409, "STOCK_LIMIT_EXCEEDED");
         assertThat(inventory.get(id).quantity()).isEqualTo(Long.MAX_VALUE);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
     }
 
     @Test
@@ -144,6 +146,9 @@ class DeepFineApplicationTests {
         concurrently(80, i -> inventory.receive(new ReceiveRequest("동시 등록", 1L)));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT quantity FROM inventory", Long.class)).isEqualTo(80);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM inventory", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement WHERE type = 'RECEIPT'", Long.class)).isEqualTo(80);
+        assertThat(jdbc.queryForObject("SELECT sum(quantity_delta) FROM stock_movement", Long.class)).isEqualTo(80);
     }
 
     @Test
@@ -163,6 +168,8 @@ class DeepFineApplicationTests {
         assertThat(success.get()).isEqualTo(20);
         assertThat(conflicts.get()).isEqualTo(60);
         assertThat(inventory.get(id).quantity()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement WHERE type = 'SHIPMENT'", Long.class)).isEqualTo(20);
+        assertThat(jdbc.queryForObject("SELECT sum(quantity_delta) FROM stock_movement", Long.class)).isZero();
     }
 
     @Test
@@ -173,6 +180,8 @@ class DeepFineApplicationTests {
             else inventory.ship(id, new ShipRequest(1L));
         });
         assertThat(inventory.get(id).quantity()).isEqualTo(150);
+        assertThat(jdbc.queryForObject("SELECT sum(quantity_delta) FROM stock_movement", Long.class)).isEqualTo(150);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(101);
     }
 
     @Test
@@ -182,6 +191,111 @@ class DeepFineApplicationTests {
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("INSERT INTO product(name, sku) VALUES ('A', 'OTHER-SKU')"))
                 .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    }
+
+    @Test
+    void failedMovementInsertRollsBackStockAndNewProduct() {
+        jdbc.execute("ALTER TABLE stock_movement ADD CONSTRAINT test_reject_seven CHECK (quantity_delta <> 7)");
+        try {
+            long id = inventory.receive(new ReceiveRequest("existing", 10L)).id();
+            assertThatThrownBy(() -> inventory.receive(new ReceiveRequest("existing", 7L)))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThat(inventory.get(id).quantity()).isEqualTo(10);
+            assertThatThrownBy(() -> inventory.receive(new ReceiveRequest("new", 7L)))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM product", Long.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM inventory", Long.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
+        } finally {
+            jdbc.execute("ALTER TABLE stock_movement DROP CONSTRAINT test_reject_seven");
+        }
+    }
+
+    @Test
+    void stockIsSeparatedByWarehouseAndConstraintsProtectReferences() {
+        long productId = inventory.receive(new ReceiveRequest("A", 10L)).id();
+        long warehouseId = jdbc.queryForObject(
+                "INSERT INTO warehouse(code, name) VALUES ('SECOND', '두 번째 창고') RETURNING id", Long.class);
+        try {
+            long stockId = jdbc.queryForObject(
+                    "INSERT INTO inventory(product_id, warehouse_id, quantity) VALUES (?, ?, 0) RETURNING id",
+                    Long.class, productId, warehouseId);
+            inventory.ship(productId, new ShipRequest(3L));
+            assertThat(inventory.get(productId).quantity()).isEqualTo(7);
+            assertThat(jdbc.queryForObject("SELECT quantity FROM inventory WHERE id = ?", Long.class, stockId)).isZero();
+            assertThatThrownBy(() -> jdbc.update(
+                    "INSERT INTO inventory(product_id, warehouse_id) VALUES (?, ?)", productId, warehouseId))
+                    .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+            assertThatThrownBy(() -> jdbc.update("DELETE FROM product WHERE id = ?", productId))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbc.update(
+                    "INSERT INTO stock_movement(inventory_id, type, quantity_delta) VALUES (?, 'RECEIPT', -1)", stockId))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbc.update(
+                    "INSERT INTO stock_movement(inventory_id, type, quantity_delta) VALUES (?, 'SHIPMENT', 0)", stockId))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        } finally {
+            jdbc.update("DELETE FROM inventory WHERE warehouse_id = ?", warehouseId);
+            jdbc.update("DELETE FROM warehouse WHERE id = ?", warehouseId);
+        }
+    }
+
+    @Test
+    @DisplayName("여러 상품의 입출고 이력이 각 상품 재고에 연결된다")
+    void movementsReferenceTheCorrectProductStock() {
+        long firstId = inventory.receive(new ReceiveRequest("상품 A", 10L)).id();
+        long secondId = inventory.receive(new ReceiveRequest("상품 B", 20L)).id();
+
+        inventory.ship(firstId, new ShipRequest(3L));
+
+        var history = jdbc.query("""
+                SELECT i.product_id, w.code, m.type, m.quantity_delta
+                FROM stock_movement m
+                JOIN inventory i ON i.id = m.inventory_id
+                JOIN warehouse w ON w.id = i.warehouse_id
+                ORDER BY m.id
+                """, (row, index) -> tuple(row.getLong("product_id"), row.getString("code"),
+                        row.getString("type"), row.getLong("quantity_delta")));
+        assertThat(history).containsExactly(
+                tuple(firstId, "DEFAULT", "RECEIPT", 10L),
+                tuple(secondId, "DEFAULT", "RECEIPT", 20L),
+                tuple(firstId, "DEFAULT", "SHIPMENT", -3L));
+        assertThat(inventory.get(firstId).quantity()).isEqualTo(7);
+        assertThat(inventory.get(secondId).quantity()).isEqualTo(20);
+    }
+
+    @Test
+    @DisplayName("출고 이력 저장 실패 시 503을 반환하고 재고와 이력을 유지한다")
+    void failedShipmentHistoryInsertRollsBackStockThroughHttp() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("상품 A", 10L)).id();
+        jdbc.execute("ALTER TABLE stock_movement ADD CONSTRAINT test_reject_shipment CHECK (type <> 'SHIPMENT')");
+        try {
+            assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":3}"),
+                    503, "DATABASE_UNAVAILABLE");
+
+            assertThat(inventory.get(id).quantity()).isEqualTo(10);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT sum(quantity_delta) FROM stock_movement", Long.class)).isEqualTo(10);
+        } finally {
+            jdbc.execute("ALTER TABLE stock_movement DROP CONSTRAINT test_reject_shipment");
+        }
+    }
+
+    @Test
+    @DisplayName("커밋 시 재고 UPDATE가 실패하면 먼저 INSERT한 이력도 롤백된다")
+    void failedStockUpdateRollsBackInsertedHistoryThroughHttp() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("상품 A", 10L)).id();
+        jdbc.execute("ALTER TABLE inventory ADD CONSTRAINT test_reject_seven_stock CHECK (quantity <> 7)");
+        try {
+            assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":3}"),
+                    503, "DATABASE_UNAVAILABLE");
+
+            assertThat(inventory.get(id).quantity()).isEqualTo(10);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT sum(quantity_delta) FROM stock_movement", Long.class)).isEqualTo(10);
+        } finally {
+            jdbc.execute("ALTER TABLE inventory DROP CONSTRAINT test_reject_seven_stock");
+        }
     }
 
     private void concurrently(int count, IntConsumer action) throws Exception {
