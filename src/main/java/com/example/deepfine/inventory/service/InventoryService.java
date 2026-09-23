@@ -1,4 +1,11 @@
-package com.example.deepfine.inventory;
+package com.example.deepfine.inventory.service;
+
+import com.example.deepfine.inventory.dto.Product;
+import com.example.deepfine.inventory.dto.ReceiveRequest;
+import com.example.deepfine.inventory.dto.ShipRequest;
+import com.example.deepfine.inventory.entity.ProductEntity;
+import com.example.deepfine.inventory.exception.InventoryException;
+import com.example.deepfine.inventory.repository.ProductRepository;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;

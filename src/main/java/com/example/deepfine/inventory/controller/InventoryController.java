@@ -1,4 +1,9 @@
-package com.example.deepfine.inventory;
+package com.example.deepfine.inventory.controller;
+
+import com.example.deepfine.inventory.dto.Product;
+import com.example.deepfine.inventory.dto.ReceiveRequest;
+import com.example.deepfine.inventory.dto.ShipRequest;
+import com.example.deepfine.inventory.service.InventoryService;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;

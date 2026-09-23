@@ -1,4 +1,7 @@
-package com.example.deepfine.inventory;
+package com.example.deepfine.inventory.entity;
+
+import com.example.deepfine.inventory.dto.Product;
+import com.example.deepfine.inventory.exception.InventoryException;
 
 import jakarta.persistence.*;
 import org.springframework.http.HttpStatus;

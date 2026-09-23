@@ -1,9 +1,9 @@
 package com.example.deepfine;
 
-import com.example.deepfine.inventory.InventoryService;
-import com.example.deepfine.inventory.InventoryException;
-import com.example.deepfine.inventory.ReceiveRequest;
-import com.example.deepfine.inventory.ShipRequest;
+import com.example.deepfine.inventory.service.InventoryService;
+import com.example.deepfine.inventory.exception.InventoryException;
+import com.example.deepfine.inventory.dto.ReceiveRequest;
+import com.example.deepfine.inventory.dto.ShipRequest;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;

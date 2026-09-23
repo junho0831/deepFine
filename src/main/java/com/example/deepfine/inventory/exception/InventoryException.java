@@ -1,4 +1,4 @@
-package com.example.deepfine.inventory;
+package com.example.deepfine.inventory.exception;
 
 import org.springframework.http.HttpStatus;
 
