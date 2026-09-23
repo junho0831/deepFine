@@ -5,7 +5,7 @@
 ## 기술 구성
 
 Java 17, Spring Boot 4.1.1, Spring MVC, Bean Validation, Spring Data JPA,
-PostgreSQL 17, Flyway, Lombok을 사용합니다. 테스트는 JUnit과 Testcontainers로 검증합니다.
+PostgreSQL 17, Flyway, Lombok을 사용합니다. 테스트에는 JUnit, Mockito, AssertJ, Testcontainers를 사용합니다.
 
 컨트롤러는 HTTP 입력 검증, 서비스는 트랜잭션과 흐름 제어,
 엔티티는 수량 규칙, 저장소는 조회와 잠금을 담당합니다.
@@ -33,6 +33,40 @@ inventory/
 ## 동시성 및 정합성
 
 ### 테이블 구조
+
+```mermaid
+erDiagram
+    product ||--o{ inventory : "상품별 재고"
+    warehouse ||--o{ inventory : "창고별 재고"
+    inventory ||--o{ stock_movement : "입출고 이력"
+
+    product {
+        bigint id PK
+        varchar sku UK
+        varchar name UK
+    }
+    warehouse {
+        bigint id PK
+        varchar code UK
+        varchar name
+    }
+    inventory {
+        bigint id PK
+        bigint product_id FK
+        bigint warehouse_id FK
+        bigint quantity
+    }
+    stock_movement {
+        bigint id PK
+        bigint inventory_id FK
+        varchar type
+        bigint quantity_delta
+        timestamptz created_at
+    }
+```
+
+`inventory`의 `(product_id, warehouse_id)`에는 복합 UNIQUE 제약이 있습니다.
+각 재고는 하나의 상품과 창고에 속하며, 입출고 이력은 해당 재고를 참조합니다.
 
 | 테이블 | 역할 | 주요 제약 |
 | --- | --- | --- |

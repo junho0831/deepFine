@@ -25,7 +25,7 @@
 | 스키마 관리 | Flyway |
 | 코드 생성 | Lombok |
 | 빌드 | Gradle Wrapper |
-| 테스트 | JUnit, AssertJ, Testcontainers |
+| 테스트 | JUnit, Mockito, AssertJ, Testcontainers |
 | 로컬 DB 실행 옵션 | Docker Compose |
 
 ## 4. 시작 가이드 (Getting Started)
@@ -76,6 +76,9 @@ docker compose up -d --wait
 ./gradlew bootRun
 ```
 
+서버 시작 시 Flyway가 미적용 마이그레이션을 실행합니다. 빈 DB에서는 V1이
+4개 테이블과 기본 창고(`DEFAULT`)를 생성하므로 SQL을 직접 실행할 필요가 없습니다.
+
 기본 주소는 `http://localhost:8080`입니다. 실행 중인 터미널에서 `Ctrl+C`로 종료합니다.
 접속 정보가 다르면 실행할 터미널에 환경 변수를 지정합니다. 예를 들어 DB 포트가 `55432`이면:
 
@@ -91,12 +94,16 @@ export DB_URL=jdbc:postgresql://localhost:55432/inventory
 | `DB_PASSWORD` | `inventory` |
 | `PORT` | `8080` |
 
-실행 JAR로 빌드하고 실행할 수도 있습니다. 같은 터미널에 설정한 DB 환경 변수가 적용됩니다.
+테스트 없이 실행 JAR만 만들려면 `bootJar`를 사용합니다.
+같은 터미널에 설정한 DB 환경 변수가 실행 시 적용됩니다.
 
 ```bash
 ./gradlew bootJar
 java -jar build/libs/deepFine-0.0.1-SNAPSHOT.jar
 ```
+
+테스트까지 검증하고 빌드하려면 `./gradlew build`를 실행합니다.
+단위 테스트와 PostgreSQL 통합 테스트가 모두 포함되므로 Docker가 필요합니다.
 
 Compose로 띄운 DB를 종료하려면 다음 명령을 사용합니다. 저장된 데이터는 유지됩니다.
 
