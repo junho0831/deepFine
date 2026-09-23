@@ -35,6 +35,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "데이터베이스 요청을 처리하지 못했습니다.");
     }
 
+    @ExceptionHandler(Exception.class)
+    public ProblemDetail handleUnexpected(Exception exception) {
+        log.error("예상하지 못한 요청 처리 오류", exception);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR",
+                "서버 내부 오류가 발생했습니다.");
+    }
+
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(Exception exception, Object body,
             HttpHeaders headers, HttpStatusCode status, WebRequest request) {
