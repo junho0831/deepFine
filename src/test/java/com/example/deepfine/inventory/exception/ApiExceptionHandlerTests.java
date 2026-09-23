@@ -64,4 +64,23 @@ class ApiExceptionHandlerTests {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("PRODUCT_NOT_FOUND"));
     }
+    @Test
+    @DisplayName("DB 제약 위반은 내부 오류로 처리하고 상세 SQL을 노출하지 않는다")
+    void unexpectedConstraintViolationReturns500() throws Exception {
+        when(inventory.get(1L)).thenThrow(new org.springframework.dao.DataIntegrityViolationException("민감한 SQL"));
+        mvc.perform(get("/api/products/1"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("INTERNAL_SERVER_ERROR"))
+                .andExpect(content().string(not(containsString("민감한 SQL"))));
+    }
+
+    @Test
+    @DisplayName("잠금 획득 실패는 일시적 DB 장애로 처리한다")
+    void lockFailureReturns503() throws Exception {
+        when(inventory.get(1L)).thenThrow(new org.springframework.dao.CannotAcquireLockException("lock timeout"));
+        mvc.perform(get("/api/products/1"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("DATABASE_UNAVAILABLE"));
+    }
+
 }

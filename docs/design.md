@@ -144,8 +144,8 @@ DB statement timeout은 5초, 연결 획득 제한도 5초입니다.
 | 404 | `PRODUCT_NOT_FOUND` | 조회·출고 대상 상품 없음 |
 | 409 | `INSUFFICIENT_STOCK` | 출고 재고 부족 |
 | 409 | `STOCK_LIMIT_EXCEEDED` | 입고 후 BIGINT 범위 초과 |
-| 503 | `DATABASE_UNAVAILABLE` | DB 요청 실패 또는 제한 시간 초과 |
-| 500 | `INTERNAL_SERVER_ERROR` | 예상하지 못한 서버 내부 오류 |
+| 503 | `DATABASE_UNAVAILABLE` | DB 연결 장애, 잠금 획득 실패 등 일시적 DB 오류 |
+| 500 | `INTERNAL_SERVER_ERROR` | SQL 오류·예상하지 못한 제약 위반 등 서버 내부 오류 |
 
 오류는 `application/problem+json`으로 반환합니다. 예:
 
@@ -181,7 +181,7 @@ Mock 테스트는 실제 DB 잠금이나 트랜잭션 롤백을 검증하지 않
 - 초기 재고 100개에 입고 50건(각 2개)·출고 50건(각 1개) → 최종 재고 150
 - DB 자체의 음수 재고·중복 상품명 차단
 - 이력 저장 실패 시 수량 변경·신규 상품 생성 롤백
-- 출고 이력 저장 실패 시 HTTP 503 응답과 재고·이력 유지
+- 출고 이력 저장 실패 시 HTTP 500 응답과 재고·이력 유지
 - 커밋 시 재고 UPDATE 실패 시 먼저 저장한 이력도 롤백
 - 여러 상품의 이력이 각 상품·기본 창고 재고에 연결되는지 확인
 - 창고별 재고 분리와 외래 키·재고 중복·이력 변경량 제약

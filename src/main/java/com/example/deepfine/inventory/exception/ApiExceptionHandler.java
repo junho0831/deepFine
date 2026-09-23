@@ -3,6 +3,8 @@ package com.example.deepfine.inventory.exception;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -28,11 +30,18 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(status, errorCode.name(), exception.getMessage());
     }
 
-    @ExceptionHandler(DataAccessException.class)
-    public ProblemDetail handleDatabase(DataAccessException exception) {
+    @ExceptionHandler({DataAccessResourceFailureException.class, TransientDataAccessException.class})
+    public ProblemDetail handleUnavailableDatabase(DataAccessException exception) {
         log.error("Database operation failed", exception);
         return problem(HttpStatus.SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE",
                 "데이터베이스 요청을 처리하지 못했습니다.");
+    }
+
+    @ExceptionHandler(DataAccessException.class)
+    public ProblemDetail handleDatabase(DataAccessException exception) {
+        log.error("Unexpected database operation failure", exception);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR",
+                "서버 내부 오류가 발생했습니다.");
     }
 
     @ExceptionHandler(Exception.class)

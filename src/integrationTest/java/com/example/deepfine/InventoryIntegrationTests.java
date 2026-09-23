@@ -265,13 +265,13 @@ class InventoryIntegrationTests {
     }
 
     @Test
-    @DisplayName("출고 이력 저장 실패 시 503을 반환하고 재고와 이력을 유지한다")
+    @DisplayName("출고 이력 저장 실패 시 500을 반환하고 재고와 이력을 유지한다")
     void failedShipmentHistoryInsertRollsBackStockThroughHttp() throws Exception {
         long id = inventory.receive(new ReceiveRequest("상품 A", 10L)).id();
         jdbc.execute("ALTER TABLE stock_movement ADD CONSTRAINT test_reject_shipment CHECK (type <> 'SHIPMENT')");
         try {
             assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":3}"),
-                    503, "DATABASE_UNAVAILABLE");
+                    500, "INTERNAL_SERVER_ERROR");
 
             assertThat(inventory.get(id).quantity()).isEqualTo(10);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
@@ -288,7 +288,7 @@ class InventoryIntegrationTests {
         jdbc.execute("ALTER TABLE inventory ADD CONSTRAINT test_reject_seven_stock CHECK (quantity <> 7)");
         try {
             assertError(request("POST", "/api/products/" + id + "/shipments", "{\"quantity\":3}"),
-                    503, "DATABASE_UNAVAILABLE");
+                    500, "INTERNAL_SERVER_ERROR");
 
             assertThat(inventory.get(id).quantity()).isEqualTo(10);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM stock_movement", Long.class)).isEqualTo(1);
