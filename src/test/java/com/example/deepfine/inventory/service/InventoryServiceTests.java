@@ -171,6 +171,31 @@ class InventoryServiceTests {
         verifyNoInteractions(inventories, movements);
     }
 
+    @Test
+    @DisplayName("이력 조회는 기본 창고의 재고 ID로 페이지를 요청한다")
+    void historyUsesStockIdAndPage() {
+        defaultWarehouseExists();
+        when(inventories.findStock(11L, 22L)).thenReturn(Optional.of(stock(10)));
+        var pageable = org.springframework.data.domain.PageRequest.of(1, 2);
+        var item = new com.example.deepfine.inventory.dto.StockMovementResponse(
+                7L, StockMovementEntity.Type.RECEIPT, 10L, java.time.Instant.EPOCH);
+        when(movements.findHistory(33L, pageable)).thenReturn(
+                new org.springframework.data.domain.PageImpl<>(java.util.List.of(item), pageable, 3));
+        var result = service.history(11L, 1, 2);
+        assertThat(result.items()).containsExactly(item);
+        assertThat(result.page()).isEqualTo(1);
+        assertThat(result.totalElements()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("재고가 없으면 이력 저장소를 조회하지 않는다")
+    void historyRejectsMissingStock() {
+        defaultWarehouseExists();
+        when(inventories.findStock(11L, 22L)).thenReturn(Optional.empty());
+        assertError(() -> service.history(11L, 0, 20), InventoryErrorCode.PRODUCT_NOT_FOUND);
+        verifyNoInteractions(movements);
+    }
+
     private void defaultWarehouseExists() {
         when(warehouses.findByCode("DEFAULT")).thenReturn(Optional.of(warehouse));
     }

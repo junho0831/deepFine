@@ -308,6 +308,49 @@ class InventoryIntegrationTests {
         assertThat(errors.get(0).get("message").asText()).isEqualTo("상품 ID는 양수여야 합니다.");
     }
 
+    @Test
+    @DisplayName("상품 이력은 다른 상품을 제외하고 동일 시각에도 ID 역순으로 페이징한다")
+    void movementHistoryIsScopedAndPaged() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 10L)).id();
+        inventory.receive(new ReceiveRequest("B", 20L));
+        inventory.ship(id, new ShipRequest(3L));
+        inventory.receive(new ReceiveRequest("A", 2L));
+        jdbc.update("UPDATE stock_movement SET created_at = '2026-01-01T00:00:00Z'");
+
+        var response = request("GET", "/api/products/" + id + "/movements?page=0&size=2", null);
+        assertThat(response.statusCode()).isEqualTo(200);
+        var page = mapper.readTree(response.body());
+        assertThat(page.get("totalElements").asLong()).isEqualTo(3);
+        assertThat(page.get("totalPages").asInt()).isEqualTo(2);
+        assertThat(page.get("items").size()).isEqualTo(2);
+        assertThat(page.get("items").get(0).get("quantityDelta").asLong()).isEqualTo(2);
+        assertThat(page.get("items").get(1).get("type").asText()).isEqualTo("SHIPMENT");
+        assertThat(page.get("items").get(1).get("quantityDelta").asLong()).isEqualTo(-3);
+        var second = mapper.readTree(request("GET", "/api/products/" + id + "/movements?page=1&size=2", null).body());
+        assertThat(second.get("items").size()).isEqualTo(1);
+        assertThat(second.get("items").get(0).get("quantityDelta").asLong()).isEqualTo(10);
+        var beyond = mapper.readTree(request("GET", "/api/products/" + id + "/movements?page=2&size=2", null).body());
+        assertThat(beyond.get("items").size()).isZero();
+        assertThat(beyond.get("totalElements").asLong()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("이력이 없으면 빈 페이지, 상품 재고가 없으면 404를 반환한다")
+    void historyHandlesEmptyAndMissingStock() throws Exception {
+        long id = inventory.receive(new ReceiveRequest("A", 1L)).id();
+        jdbc.update("DELETE FROM stock_movement");
+        var response = request("GET", "/api/products/" + id + "/movements", null);
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(response.body()).get("items").size()).isZero();
+        assertError(request("GET", "/api/products/999/movements", null), 404, "PRODUCT_NOT_FOUND");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"page=-1", "size=0", "size=101", "page=abc", "size=2147483648"})
+    void historyRejectsInvalidPagination(String query) throws Exception {
+        assertError(request("GET", "/api/products/1/movements?" + query, null), 400, "INVALID_REQUEST");
+    }
+
     private void concurrently(int count, IntConsumer action) throws Exception {
         int workers = 16;
         ExecutorService executor = Executors.newFixedThreadPool(workers);

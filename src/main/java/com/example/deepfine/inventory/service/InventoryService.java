@@ -1,6 +1,8 @@
 package com.example.deepfine.inventory.service;
 
 import com.example.deepfine.inventory.dto.ProductResponse;
+import com.example.deepfine.inventory.dto.StockMovementPage;
+import org.springframework.data.domain.PageRequest;
 import com.example.deepfine.inventory.dto.ReceiveRequest;
 import com.example.deepfine.inventory.dto.ShipRequest;
 import com.example.deepfine.inventory.entity.InventoryEntity;
@@ -25,6 +27,12 @@ public class InventoryService {
     @Transactional(readOnly = true)
     public ProductResponse get(long id) {
         return ProductResponse.from(inventories.findStock(id, defaultWarehouseId()).orElseThrow(this::notFound));
+    }
+
+    @Transactional(readOnly = true)
+    public StockMovementPage history(long id, int page, int size) {
+        InventoryEntity stock = inventories.findStock(id, defaultWarehouseId()).orElseThrow(this::notFound);
+        return StockMovementPage.from(movements.findHistory(stock.getId(), PageRequest.of(page, size)));
     }
 
     @Transactional
