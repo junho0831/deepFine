@@ -1,31 +1,88 @@
 # 재고 관리 API
 
-Java / Spring Boot / PostgreSQL 기반 재고 관리 사전 과제입니다.
-상품 재고 조회, 미등록 상품 자동 등록을 포함한 입고, 재고 부족을 방지하는 출고를 구현했습니다.
+## 1. 프로젝트 소개 (Introduction)
 
-## 기술 구성
+동시에 들어오는 입출고 요청에서도 재고를 정확히 관리하기 위해 만든 Spring Boot 기반 재고 관리 API입니다.
 
-- Java 17, Spring Boot 4.1.1, Gradle Wrapper 9.7.1
-- Spring MVC, Bean Validation, Spring Data JPA
-- PostgreSQL 17, Flyway
-- JUnit, Testcontainers: H2 대체 DB 없이 실제 PostgreSQL 통합 테스트
+## 2. 주요 기능 (Key Features)
 
-Spring Data JPA의 `@Lock(PESSIMISTIC_WRITE)`로 변경할 상품을 잠근 뒤 엔티티에서 재고를 변경합니다.
-컨트롤러는 HTTP 입력 검증, 서비스는 트랜잭션과 흐름 제어, 엔티티는 수량 규칙, 저장소는 조회와 잠금을 담당합니다.
-Flyway가 DDL을 관리하고 Hibernate는 `ddl-auto: validate`로 스키마만 검증합니다. OSIV는 비활성화했습니다.
+- **상품 자동 등록**: 처음 입고하는 상품을 등록하고 SKU를 자동 발급합니다.
+- **입고·출고 처리**: 재고를 증감하고 재고 부족이나 수량 상한 초과를 차단합니다.
+- **현재 재고 조회**: 상품 ID로 기본 창고의 재고를 확인합니다.
+- **입출고 이력 저장**: 수량 변경과 이력을 같은 트랜잭션으로 저장합니다.
+- **동시 요청 처리**: 상품·창고별 재고 행에 비관적 락을 적용해 동시 변경을 처리합니다.
 
-## 실행
+현재 API는 기본 창고(`DEFAULT`)를 사용합니다. 창고 선택과 입출고 이력 조회 API는 아직 제공하지 않습니다.
 
-Java 17과 Docker Compose가 필요합니다. 애플리케이션과 테스트 모두 Gradle Wrapper로 실행합니다.
+## 3. 기술 스택 (Tech Stack)
+
+| 구분 | 기술 |
+| --- | --- |
+| 언어 | Java 17 |
+| 프레임워크 | Spring Boot 4.1.1, Spring MVC |
+| 데이터 접근·검증 | Spring Data JPA, Bean Validation |
+| 데이터베이스 | PostgreSQL 17 |
+| 스키마 관리 | Flyway |
+| 코드 생성 | Lombok |
+| 빌드 | Gradle Wrapper |
+| 테스트 | JUnit, AssertJ, Testcontainers |
+| 로컬 DB 실행 옵션 | Docker Compose |
+
+## 4. 시작 가이드 (Getting Started)
+
+Java 17과 Git이 필요합니다. PostgreSQL 17은 기존 로컬 설치 또는 Docker Compose 중 하나를 사용합니다.
+단위 테스트는 Docker 없이 실행할 수 있으며, DB 통합 테스트에는 Docker가 필요합니다.
+아래 명령은 macOS/Linux 셸 기준입니다.
+
+### 1. 저장소 복제
+
+```bash
+git clone https://github.com/junho0831/deepFine.git
+cd deepFine
+```
+
+Gradle은 프로젝트의 Wrapper를 사용하므로 별도 설치하지 않아도 됩니다.
+
+### 2. DB 준비
+
+#### 기존 PostgreSQL 사용
+
+PostgreSQL이 실행 중이라면 관리자 계정으로 접속해 프로젝트용 계정과 DB를 생성합니다.
+이미 준비돼 있다면 이 단계는 건너뜁니다.
+
+```sql
+CREATE ROLE inventory LOGIN PASSWORD 'inventory';
+CREATE DATABASE inventory OWNER inventory;
+```
+
+기본 접속 정보는 `localhost:5432/inventory`, 계정·비밀번호는 로컬 개발용 `inventory`입니다.
+
+#### Docker Compose 사용
+
+별도 PostgreSQL이 없다면 프로젝트 루트에서 실행합니다.
 
 ```bash
 docker compose up -d --wait
+```
+
+현재 Compose는 호스트의 `5432` 포트를 사용합니다. 이미 사용 중이면 기존 PostgreSQL을 이용하거나,
+`compose.yaml`의 포트 매핑을 `127.0.0.1:55432:5432`로 바꾼 뒤 실행하고 아래 `DB_URL`도 맞춥니다.
+
+### 3. 애플리케이션 실행
+
+프로젝트 루트에서 실행합니다.
+
+```bash
 ./gradlew bootRun
 ```
 
-애플리케이션은 `http://localhost:8080`에서 실행되며, 시작 시 Flyway가 DDL을 적용합니다.
-DB는 `localhost:5432/inventory`, 로컬 개발용 계정과 비밀번호는 `inventory`입니다.
-이미 5432 포트를 사용 중이면 Compose의 호스트 포트와 `DB_URL`을 함께 변경해 주세요.
+기본 주소는 `http://localhost:8080`입니다. 실행 중인 터미널에서 `Ctrl+C`로 종료합니다.
+접속 정보가 다르면 실행할 터미널에 환경 변수를 지정합니다. 예를 들어 DB 포트가 `55432`이면:
+
+```bash
+export DB_URL=jdbc:postgresql://localhost:55432/inventory
+./gradlew bootRun
+```
 
 | 환경 변수 | 기본값 |
 | --- | --- |
@@ -34,34 +91,24 @@ DB는 `localhost:5432/inventory`, 로컬 개발용 계정과 비밀번호는 `in
 | `DB_PASSWORD` | `inventory` |
 | `PORT` | `8080` |
 
-```bash
-# PostgreSQL 컨테이너 정지 (데이터 유지)
-docker compose down
+실행 JAR로 빌드하고 실행할 수도 있습니다. 같은 터미널에 설정한 DB 환경 변수가 적용됩니다.
 
-# 테스트 및 실행 JAR 생성
-./gradlew clean test bootJar
+```bash
+./gradlew bootJar
 java -jar build/libs/deepFine-0.0.1-SNAPSHOT.jar
 ```
 
-테스트는 Docker가 실행 중이면 PostgreSQL 컨테이너를 자동 생성·정리합니다.
-Compose DB 또는 외부 DB는 사용하지 않습니다. Docker가 없으면 테스트는 실패하며 자동으로 건너뛰지 않습니다.
+Compose로 띄운 DB를 종료하려면 다음 명령을 사용합니다. 저장된 데이터는 유지됩니다.
 
-## DB DDL
+```bash
+docker compose down
+```
 
-제출용 DDL이자 실제 실행되는 마이그레이션 파일:
-[`src/main/resources/db/migration/V1__create_product.sql`](src/main/resources/db/migration/V1__create_product.sql)
+### 4. API 호출
 
-| 컬럼 | 타입 | 규칙 |
-| --- | --- | --- |
-| `id` | BIGINT IDENTITY | PK, 서버에서 생성 |
-| `name` | VARCHAR(100) | NOT NULL, UNIQUE, 공백 이름 금지 |
-| `quantity` | BIGINT | NOT NULL, 0 이상 CHECK |
+모든 요청은 기본 창고(`DEFAULT`)의 재고를 사용합니다. 아래 예시는 빈 DB에서 순서대로 실행하는 기준입니다.
 
-DDL을 수동 실행할 필요가 없습니다. Flyway가 스키마 버전을 관리하므로 후속 변경은 새로운 마이그레이션 파일로 추가합니다.
-
-## API
-
-### 입고: `POST /api/products/receipts`
+#### 입고: `POST /api/products/receipts`
 
 상품명으로 기존 상품을 찾습니다. 없으면 신규 상품 등록과 입고를 한 번에 처리합니다.
 신규·기존 상품 모두 입고 완료 후 상품 정보와 `200 OK`를 반환합니다.
@@ -76,7 +123,7 @@ curl -i -X POST http://localhost:8080/api/products/receipts \
 {"id":1,"name":"상품 A","quantity":10}
 ```
 
-### 출고: `POST /api/products/{id}/shipments`
+#### 출고: `POST /api/products/{id}/shipments`
 
 아래 예시의 ID는 입고 응답의 `id`로 바꿔 사용합니다.
 
@@ -90,7 +137,7 @@ curl -i -X POST http://localhost:8080/api/products/1/shipments \
 {"id":1,"name":"상품 A","quantity":7}
 ```
 
-### 재고 조회: `GET /api/products/{id}`
+#### 재고 조회: `GET /api/products/{id}`
 
 ```bash
 curl -i http://localhost:8080/api/products/1
@@ -100,95 +147,60 @@ curl -i http://localhost:8080/api/products/1
 {"id":1,"name":"상품 A","quantity":7}
 ```
 
-### 입력 규칙 및 오류
+입출고 수량은 양의 정수여야 하며, 재고 부족은 `409`, 조회·출고 대상이 없으면 `404`를 반환합니다.
+상세 입력 규칙과 오류 응답은 [설계 문서](docs/design.md#입력-규칙-및-오류)를 참고하세요.
 
-- 상품명 앞뒤 공백은 제거합니다. 제거 후 1~100자이며 공백만 있는 이름은 허용하지 않습니다.
-- MVP에서는 상품명을 고유 식별 기준으로 사용합니다. 대소문자와 내부 공백은 구분합니다.
-- 입출고 수량은 `1`부터 `9223372036854775807`까지의 정수입니다. 현재 재고는 `0`도 허용합니다.
-- ID는 양수여야 합니다. 잘못된 JSON, 누락된 필수 값, 소수 수량, 알 수 없는 필드는 거부합니다.
-- 출고 요청량이 재고와 같으면 성공하며 재고는 `0`이 됩니다.
+### 5. 테스트
 
-| HTTP 상태 | code | 상황 |
-| --- | --- | --- |
-| 400 | `INVALID_REQUEST` | 입력 검증 실패, 잘못된 JSON 또는 ID |
-| 404 | `PRODUCT_NOT_FOUND` | 조회·출고 대상 상품 없음 |
-| 409 | `INSUFFICIENT_STOCK` | 출고 재고 부족 |
-| 409 | `STOCK_LIMIT_EXCEEDED` | 입고 후 BIGINT 범위 초과 |
-| 503 | `DATABASE_UNAVAILABLE` | DB 요청 실패 또는 제한 시간 초과 |
+DB 없이 단위 테스트와 MockMvc 기반 오류 응답 테스트를 실행합니다.
 
-오류는 `application/problem+json`으로 반환합니다. 예:
-
-```json
-{
-  "type":"about:blank",
-  "title":"Conflict",
-  "status":409,
-  "detail":"출고 가능한 재고가 부족합니다.",
-  "instance":"/api/products/1/shipments",
-  "code":"INSUFFICIENT_STOCK"
-}
+```bash
+./gradlew test
 ```
 
-## 동시성 및 정합성
+서비스 테스트는 Repository를 Mockito로 대체하고 실제 엔티티의 업무 로직을 검증합니다.
+Spring 애플리케이션이나 DB 서버를 실행하지 않습니다.
 
-### 입고
+DB 통합 테스트는 Docker가 실행 중인 상태에서 별도로 실행합니다.
+Testcontainers가 테스트 전용 PostgreSQL을 생성·정리하므로 로컬 개발 DB나 Compose DB를 준비할 필요는 없습니다.
 
-상품명으로 `@Lock(LockModeType.PESSIMISTIC_WRITE)` 조회 후 잠긴 엔티티에서 재고를 증가시킵니다.
-엔티티가 변경되면 JPA 변경 감지가 트랜잭션 커밋 시 UPDATE를 수행합니다.
-덧셈 전에 상한을 검사하여 BIGINT 오버플로를 방지합니다.
+```bash
+./gradlew integrationTest
+```
 
-미등록 상품에는 잠글 행이 없으므로 신규 등록만 네이티브 SQL
-`INSERT ... ON CONFLICT (name) DO NOTHING`으로 처리합니다. 초기 재고 0으로 생성한 뒤
-다시 비관적 락으로 조회하여 입고합니다. UNIQUE 제약과 충돌 무시로 동시 최초 입고의 중복 등록을 방지합니다.
-모든 단계는 같은 트랜잭션 안에서 실행되므로 입고에 실패하면 신규 등록도 롤백됩니다.
-PostgreSQL 기본 READ COMMITTED에서 충돌 대기 후 다음 조회는 커밋된 상품을 볼 수 있습니다.
+두 종류의 테스트를 모두 실행하려면 다음 명령을 사용합니다. `build`에도 이 검증이 포함됩니다.
 
-### 출고
+```bash
+./gradlew check
+```
 
-ID로 `@Lock(LockModeType.PESSIMISTIC_WRITE)` 조회 후 엔티티에서 재고를 확인하고 차감합니다.
-다른 입출고 요청은 같은 행의 잠금이 해제될 때까지 기다린 뒤 최신 재고를 읽습니다.
-상품이 없으면 404, 잠긴 상품의 재고가 부족하면 409를 반환하며 변경 사항은 롤백됩니다.
+| 구분 | 코드 위치 | 테스트 보고서 |
+| --- | --- | --- |
+| DB 없는 테스트 | `src/test/java` | `build/reports/tests/test/index.html` |
+| DB 통합 테스트 | `src/integrationTest/java` | `build/reports/tests/integrationTest/index.html` |
 
-### 트랜잭션 범위와 선택 이유
+## 5. 프로젝트 아키텍처 (Architecture)
 
-서비스의 `@Transactional`이 조회 잠금 → 업무 검증 → 변경 감지 UPDATE → 커밋까지 묶습니다.
-잠금은 트랜잭션 종료까지 유지됩니다. `@Transactional`만으로 갱신 유실을 막는 것은 아닙니다.
-같은 상품을 수정하는 모든 입출고 경로에서 비관적 락을 사용해야 합니다.
+별도 화면이 없는 백엔드 API 프로젝트입니다. 요청은 컨트롤러·서비스·저장소를 거쳐 PostgreSQL에서 처리됩니다.
 
-동일 상품의 동시 변경을 기다린 뒤 처리하도록 비관적 락을 선택했습니다.
-낙관적 락은 충돌 시 실패와 재시도 정책이 필요합니다. 비관적 락은 대기와 처리량 저하가 발생할 수 있어
-트랜잭션을 짧게 유지하고 잠금 중 외부 API를 호출하지 않습니다.
-현재는 상품 한 개만 변경하며, 여러 상품을 한 번에 잠그는 기능을 추가한다면 ID 순서 등 잠금 순서를 통일해야 합니다.
+```mermaid
+flowchart LR
+    Client[클라이언트] --> Controller[InventoryController]
+    Controller --> Service[InventoryService]
+    Service --> Entity[엔티티 수량 검증·변경]
+    Service --> Repository[JPA Repository]
+    Repository --> DB[(PostgreSQL)]
+    Flyway[Flyway V1] -->|테이블 생성| DB
+```
 
-재고에는 DB CHECK 제약도 적용했습니다. 같은 PostgreSQL에 연결하면 여러 애플리케이션 인스턴스에서도 보호됩니다.
-DB statement timeout은 5초, 연결 획득 제한도 5초입니다.
-응답의 재고는 해당 연산의 결과이며 이후 다른 요청으로 변경될 수 있습니다.
+| 테이블 | 역할 |
+| --- | --- |
+| `product` | 상품 정보와 SKU |
+| `warehouse` | 창고 정보 |
+| `inventory` | 상품·창고별 현재 재고와 잠금 대상 |
+| `stock_movement` | 입출고 이력 |
 
-공식 근거:
-- [Spring Data JPA Locking](https://docs.spring.io/spring-data/jpa/reference/jpa/locking.html)
-- [PostgreSQL 행 잠금](https://www.postgresql.org/docs/17/explicit-locking.html#LOCKING-ROWS)
-- [PostgreSQL INSERT / ON CONFLICT](https://www.postgresql.org/docs/17/sql-insert.html)
+서비스의 트랜잭션 안에서 재고 행을 잠그고 수량 변경과 입출고 이력을 함께 저장합니다.
 
-## 테스트
-
-`./gradlew test`로 다음을 검증합니다.
-
-- 실제 HTTP를 통한 신규·기존 입고 → 전량 출고 → 조회
-- 미등록 상품 404, 재고 부족 409, 잘못된 입력 400
-- 수량 상한 초과 시 재고 유지
-- 동시 신규 입고 80건 → 상품 1행, 재고 80
-- 재고 20개에 동시 출고 80건 → 성공 20건, 재고 부족 60건, 최종 재고 0
-- 초기 재고 100개에 입고 50건(각 2개)·출고 50건(각 1개) → 최종 재고 150
-- DB 자체의 음수 재고·중복 상품명 차단
-
-동시성 테스트는 16개 워커를 시작 장벽으로 동시에 출발시키며, 각 요청이 별도 서비스 트랜잭션을 사용합니다.
-모든 Future의 결과를 수집해 스레드 안의 실패가 테스트에서 누락되지 않게 했습니다.
-테스트 보고서: `build/reports/tests/test/index.html`.
-
-## MVP 범위 및 확장 방향
-
-상품 코드가 주어지지 않아 상품명을 고유 키로 정의했습니다. 상품명 변경이나 동명 상품이 필요하면
-SKU를 별도 UNIQUE 키로 도입하고 표시 이름과 분리할 수 있습니다.
-인증, 재고 변경 이력, 목록·검색, 요청 멱등성은 현재 범위에 포함하지 않았습니다.
-입출고 POST를 반복하면 매번 반영되므로 네트워크 응답 유실 시 자동 재시도는 중복 반영을 유발할 수 있습니다.
-실서비스에서는 요청 키와 처리 결과를 같은 트랜잭션으로 저장하는 멱등성 처리 및 변경 이력을 추가할 수 있습니다.
+- [상세 설계: 테이블·락·트랜잭션·테스트·구현 범위](docs/design.md)
+- [초기 테이블 생성 SQL](src/main/resources/db/migration/V1__create_product.sql)
